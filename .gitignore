@@ -6,4 +6,7 @@ auth.yaml
 *.log
 .DS_Store
 Thumbs.db
+dist/
+*.local.*
+.deploy/
 

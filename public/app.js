@@ -80,10 +80,11 @@ function formatShortDate(value) {
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, options);
+  const response = await window.InventoryAPI.fetch(url, options);
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401) {
-    window.location.replace('/login');
+    window.InventoryAPI.clearToken();
+    window.location.replace(window.InventoryAPI.loginUrl);
     throw new Error('登录已失效，请重新登录。');
   }
   if (!response.ok) throw new Error(payload.message || '请求失败');
@@ -287,11 +288,21 @@ async function submitUpload() {
   if (!state.selectedFile) return;
   elements.submitUploadButton.disabled = true;
   elements.submitUploadButton.innerHTML = '<img src="/icons/loader-circle.svg" alt="" />正在导入';
-  const formData = new FormData();
-  formData.append('file', state.selectedFile);
-
   try {
-    const result = await fetchJson('/api/imports', { method: 'POST', body: formData });
+    const file = state.selectedFile;
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))]
+      .map((value) => value.toString(16).padStart(2, '0')).join('');
+    const upload = await fetchJson('/api/import-sessions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, size: file.size, sha256 }),
+    });
+    for (let offset = 0, index = 0; offset < file.size; offset += upload.chunkBytes, index += 1) {
+      await fetchJson(`/api/import-sessions/${upload.id}/chunks/${index}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' },
+        body: file.slice(offset, offset + upload.chunkBytes),
+      });
+    }
+    const result = await fetchJson(`/api/import-sessions/${upload.id}/complete`, { method: 'POST' });
     elements.uploadResult.hidden = false;
     elements.uploadResult.className = 'upload-result success';
     elements.uploadResult.innerHTML = `导入完成：新增 <strong>${formatNumber(result.insertedRows, 0)}</strong> 条，重复 <strong>${formatNumber(result.duplicateRows, 0)}</strong> 条，异常 <strong>${formatNumber(result.errorRows, 0)}</strong> 条。`;
@@ -478,9 +489,10 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
   const button = document.querySelector('#logoutButton');
   button.disabled = true;
   try {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await window.InventoryAPI.fetch('/api/auth/logout', { method: 'POST' });
   } finally {
-    window.location.replace('/login');
+    window.InventoryAPI.clearToken();
+    window.location.replace(window.InventoryAPI.loginUrl);
   }
 });
 document.querySelector('#openUploadButton').addEventListener('click', openUploadModal);

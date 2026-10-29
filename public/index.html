@@ -204,7 +204,7 @@
         <form class="password-reset-panel" id="passwordResetForm" hidden>
           <div>
             <strong id="passwordResetTitle">重置密码</strong>
-            <span>新密码将以明文写入数据库</span>
+            <span>保存后可使用新密码登录</span>
           </div>
           <input id="resetPasswordInput" type="text" maxlength="255" autocomplete="off" required />
           <button class="button button-primary" type="submit">保存</button>
@@ -214,6 +214,8 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
+    <script src="/config.js"></script>
+    <script src="/api.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

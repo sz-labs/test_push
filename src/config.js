@@ -12,15 +12,17 @@ function loadConfig() {
     process.env.AUTH_CONFIG_PATH || path.join(projectRoot, 'auth.yaml')
   );
 
-  if (!fs.existsSync(mysqlConfigPath)) {
-    throw new Error(`找不到数据库配置文件：${mysqlConfigPath}`);
+  if (!process.env.MYSQL_CONFIG_YAML && !fs.existsSync(mysqlConfigPath)) {
+    throw new Error('找不到数据库配置。');
   }
-  if (!fs.existsSync(authConfigPath)) {
-    throw new Error(`找不到登录配置文件：${authConfigPath}`);
+  if (!process.env.AUTH_SESSION_SECRET && !fs.existsSync(authConfigPath)) {
+    throw new Error('找不到登录配置。');
   }
 
-  const mysqlConfig = yaml.load(fs.readFileSync(mysqlConfigPath, 'utf8')) || {};
-  const authConfig = yaml.load(fs.readFileSync(authConfigPath, 'utf8')) || {};
+  const mysqlConfig = yaml.load(process.env.MYSQL_CONFIG_YAML || fs.readFileSync(mysqlConfigPath, 'utf8')) || {};
+  const authConfig = process.env.AUTH_SESSION_SECRET
+    ? { auth: { session_secret: process.env.AUTH_SESSION_SECRET, session_hours: process.env.AUTH_SESSION_HOURS } }
+    : yaml.load(fs.readFileSync(authConfigPath, 'utf8')) || {};
   const mysql = mysqlConfig.mysql || {};
   const auth = authConfig.auth || {};
   const missingMysql = ['host', 'database', 'username'].filter((key) => !mysql[key]);
@@ -54,7 +56,10 @@ function loadConfig() {
     auth: {
       sessionSecret: String(auth.session_secret),
       sessionHours: Math.max(1, Number(auth.session_hours || 12)),
+      production: process.env.NODE_ENV === 'production',
     },
+    allowedOrigins: (process.env.ALLOWED_ORIGINS || 'http://127.0.0.1:3100,http://localhost:3100')
+      .split(',').map((value) => value.trim()).filter(Boolean),
     mysql: {
       host: mysql.host,
       port: Number(mysql.port || 3306),

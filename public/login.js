@@ -21,7 +21,7 @@ form.addEventListener('submit', async (event) => {
   loginButton.querySelector('span').textContent = '正在登录';
 
   try {
-    const response = await fetch('/api/auth/login', {
+    const response = await window.InventoryAPI.fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -32,7 +32,9 @@ form.addEventListener('submit', async (event) => {
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) throw new Error(payload.message || '登录失败，请重试。');
-    window.location.replace('/');
+    if (!payload.accessToken) throw new Error('登录会话创建失败，请重试。');
+    window.InventoryAPI.setToken(payload.accessToken);
+    window.location.replace(window.InventoryAPI.homeUrl);
   } catch (error) {
     loginError.textContent = error.message;
     loginError.hidden = false;

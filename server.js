@@ -1,16 +1,24 @@
 const path = require('node:path');
 const express = require('express');
 const session = require('express-session');
+const MySQLStore = require('express-mysql-session')(session);
+const crypto = require('node:crypto');
 const multer = require('multer');
 const config = require('./src/config');
 const { pool, initDatabase, pingDatabase, assertSingleAdmin } = require('./src/db');
 const { importExcelBuffer } = require('./src/excel-import');
+const { createSessionAuth } = require('./src/session-auth');
+const loginLimits = require('./src/login-limits');
+const importSessions = require('./src/import-sessions');
 
 const app = express();
-const loginAttempts = new Map();
 const publicDirectory = path.join(__dirname, 'public');
-const maxLoginFailures = 5;
-const loginWindowMs = 15 * 60 * 1000;
+const sessionStore = new MySQLStore({
+  createDatabaseTable: false, clearExpired: false, endConnectionOnClose: false,
+  expiration: config.auth.sessionHours * 60 * 60 * 1000,
+  schema: { tableName: 'dashboard_sessions', columnNames: { session_id: 'session_id', expires: 'expires', data: 'data' } },
+}, pool);
+const sessions = createSessionAuth({ auth: config.auth, store: sessionStore });
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -21,31 +29,23 @@ const upload = multer({
 });
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '100kb' }));
-app.use(session({
-  name: 'inventory.sid',
-  secret: config.auth.sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  rolling: true,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: false,
-    maxAge: config.auth.sessionHours * 60 * 60 * 1000,
-  },
-}));
-app.use('/icons', express.static(path.join(__dirname, 'node_modules', 'lucide-static', 'icons')));
-
-function getLoginState(key) {
-  const current = loginAttempts.get(key);
-  if (!current || Date.now() - current.startedAt >= loginWindowMs) {
-    const fresh = { failures: 0, startedAt: Date.now(), lockedUntil: 0 };
-    loginAttempts.set(key, fresh);
-    return fresh;
+app.use((request, response, next) => {
+  const origin = request.get('origin');
+  const allowed = !origin || config.allowedOrigins.includes(origin);
+  if (origin && allowed) {
+    response.set('Access-Control-Allow-Origin', origin);
+    response.set('Vary', 'Origin');
+    response.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type');
   }
-  return current;
-}
+  response.set('Cache-Control', 'no-store');
+  response.set('X-Content-Type-Options', 'nosniff');
+  if (request.method === 'OPTIONS') return response.sendStatus(allowed ? 204 : 403);
+  next();
+});
+app.use(express.json({ limit: '100kb' }));
+app.use(sessions.middleware);
+app.use('/icons', express.static(path.join(__dirname, 'node_modules', 'lucide-static', 'icons')));
 
 function rejectUnauthenticated(request, response) {
   if (request.path.startsWith('/api/')) {
@@ -99,26 +99,29 @@ app.get(['/login', '/login.html'], (request, response) => {
     response.redirect('/');
     return;
   }
-  response.sendFile(path.join(publicDirectory, 'login.html'));
+  response.sendFile('login.html', { root: publicDirectory });
 });
 app.get('/login.css', (_request, response) => {
-  response.sendFile(path.join(publicDirectory, 'login.css'));
+  response.sendFile('login.css', { root: publicDirectory });
 });
 app.get('/login.js', (_request, response) => {
-  response.sendFile(path.join(publicDirectory, 'login.js'));
+  response.sendFile('login.js', { root: publicDirectory });
+});
+app.get(['/api.js', '/config.js'], (request, response) => {
+  response.sendFile(path.basename(request.path), { root: publicDirectory });
+});
+app.get('/api/health', async (_request, response) => {
+  try {
+    await pingDatabase();
+    response.json({ ok: true, database: 'connected', schema: 'ready' });
+  } catch {
+    response.status(503).json({ ok: false, code: 'DATABASE_UNAVAILABLE' });
+  }
 });
 
 app.post('/api/auth/login', async (request, response, next) => {
-  const attemptKey = request.ip || request.socket.remoteAddress || 'local';
-  const attempt = getLoginState(attemptKey);
-  const now = Date.now();
-
-  if (attempt.lockedUntil > now) {
-    const retryAfter = Math.ceil((attempt.lockedUntil - now) / 1000);
-    response.set('Retry-After', String(retryAfter));
-    response.status(429).json({ message: `登录失败次数过多，请在 ${Math.ceil(retryAfter / 60)} 分钟后重试。` });
-    return;
-  }
+  const attemptKey = loginLimits.clientKey(request);
+  await loginLimits.check(attemptKey);
 
   const username = String(request.body?.username || '').trim().slice(0, 100);
   const password = String(request.body?.password || '').slice(0, 255);
@@ -137,17 +140,17 @@ app.post('/api/auth/login', async (request, response, next) => {
     next(error);
     return;
   }
-  const validCredentials = Boolean(user && user.is_active && password === user.password);
+  const digest = (value) => crypto.createHash('sha256').update(String(value)).digest();
+  const validCredentials = Boolean(user && user.is_active &&
+    crypto.timingSafeEqual(digest(password), digest(user.password)));
 
   if (!validCredentials) {
-    attempt.failures += 1;
-    if (attempt.failures >= maxLoginFailures) attempt.lockedUntil = now + loginWindowMs;
-    loginAttempts.set(attemptKey, attempt);
+    await loginLimits.record(attemptKey, false);
     response.status(401).json({ message: '用户名或密码错误。' });
     return;
   }
 
-  loginAttempts.delete(attemptKey);
+  await loginLimits.record(attemptKey, true);
   try {
     await pool.execute('UPDATE dashboard_users SET last_login_at = NOW() WHERE id = ?', [user.id]);
   } catch (error) {
@@ -168,7 +171,8 @@ app.post('/api/auth/login', async (request, response, next) => {
         next(saveError);
         return;
       }
-      response.json({ username: user.username, role: user.role });
+      response.json({ username: user.username, role: user.role,
+        accessToken: sessions.issueToken(request), expiresIn: config.auth.sessionHours * 60 * 60 });
     });
   });
 });
@@ -192,17 +196,8 @@ app.get('/api/auth/session', requireAuth, (request, response) => {
   });
 });
 
-app.use(requireAuth);
 app.use(express.static(publicDirectory));
-
-app.get('/api/health', async (_request, response, next) => {
-  try {
-    const database = await pingDatabase();
-    response.json({ ok: true, database });
-  } catch (error) {
-    next(error);
-  }
-});
+app.use(requireAuth);
 
 app.get('/api/users', requireAdmin, async (_request, response, next) => {
   try {
@@ -489,35 +484,55 @@ app.post('/api/imports', upload.single('file'), async (request, response, next) 
   }
 });
 
+app.post('/api/import-sessions', async (request, response) => {
+  response.status(201).json(await importSessions.createSession(request.body, request.user.id));
+});
+app.get('/api/import-sessions/:id', async (request, response) => {
+  response.json(await importSessions.status(request.params.id, request.user.id));
+});
+app.put('/api/import-sessions/:id/chunks/:index', express.raw({ type: 'application/octet-stream', limit: '1mb' }), async (request, response) => {
+  response.json(await importSessions.putChunk(request.params.id, Number(request.params.index), request.body, request.user.id));
+});
+app.post('/api/import-sessions/:id/complete', async (request, response) => {
+  response.json(await importSessions.completeSession(request.params.id, request.user.id));
+});
+app.delete('/api/import-sessions/:id', async (request, response) => {
+  response.json(await importSessions.cancelSession(request.params.id, request.user.id));
+});
+
 app.use((error, _request, response, _next) => {
-  console.error(error);
   const isUploadError = error instanceof multer.MulterError;
-  const status = isUploadError || /只支持|未找到|缺少|无法识别/.test(error.message)
+  const status = error.statusCode || (isUploadError || /只支持|未找到|缺少|无法识别/.test(error.message)
     ? 400
-    : 500;
+    : 500);
+  if (status >= 500) console.error('[inventory-api]', error.code || error.name || 'SERVER_ERROR');
+  if (error.retryAfter) response.set('Retry-After', String(error.retryAfter));
   response.status(status).json({
     message: isUploadError && error.code === 'LIMIT_FILE_SIZE'
       ? '文件不能超过 20MB。'
-      : error.message || '服务器处理失败。',
+      : status >= 500 && !error.expose ? '服务器处理失败，请稍后重试。' : error.message || '请求处理失败。',
   });
 });
 
 async function start() {
   await initDatabase();
   await assertSingleAdmin();
-  await new Promise((resolve, reject) => {
-    app.listen(config.server.port, config.server.host, (error) => {
+  await sessionStore.onReady();
+  return new Promise((resolve, reject) => {
+    const server = app.listen(config.server.port, config.server.host, (error) => {
       if (error) {
         reject(error);
         return;
       }
       console.log(`库存看板已启动：http://${config.server.host}:${config.server.port}`);
-      resolve();
+      resolve(server);
     });
   });
 }
 
-start().catch((error) => {
-  console.error('启动失败：', error);
+if (require.main === module) start().catch((error) => {
+  console.error('启动失败：', error.code || error.name || 'SERVER_ERROR');
   process.exitCode = 1;
 });
+
+module.exports = { app, start, sessionStore };
