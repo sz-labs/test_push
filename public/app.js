@@ -4,7 +4,10 @@ const state = {
   totalPages: 1,
   selectedFile: null,
   searchTimer: null,
+  authToken: sessionStorage.getItem('inventoryAdminToken') || '',
 };
+
+const API_BASE_URL = String(window.__INVENTORY_CONFIG__?.apiBaseUrl || '').replace(/\/+$/, '');
 
 const elements = {
   dbStatus: document.querySelector('#dbStatus'),
@@ -36,6 +39,11 @@ const elements = {
   submitUploadButton: document.querySelector('#submitUploadButton'),
   uploadResult: document.querySelector('#uploadResult'),
   toast: document.querySelector('#toast'),
+  adminLogin: document.querySelector('#adminLogin'),
+  adminPassword: document.querySelector('#adminPassword'),
+  loginButton: document.querySelector('#loginButton'),
+  loginMessage: document.querySelector('#loginMessage'),
+  uploadWorkspace: document.querySelector('#uploadWorkspace'),
 };
 
 function escapeHtml(value) {
@@ -63,10 +71,23 @@ function formatShortDate(value) {
   return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 }
 
-async function fetchJson(url, options) {
-  const response = await fetch(url, options);
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+async function fetchJson(url, options = {}) {
+  const { authenticated = false, ...fetchOptions } = options;
+  const headers = new Headers(fetchOptions.headers || {});
+  if (authenticated && state.authToken) headers.set('Authorization', `Bearer ${state.authToken}`);
+  const response = await fetch(apiUrl(url), { ...fetchOptions, headers });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || '请求失败');
+  if (!response.ok) {
+    if (authenticated && response.status === 401) {
+      state.authToken = '';
+      sessionStorage.removeItem('inventoryAdminToken');
+    }
+    throw new Error(payload.message || payload.detail || '请求失败');
+  }
   return payload;
 }
 
@@ -231,6 +252,8 @@ async function refreshAll(showMessage = false) {
 function openUploadModal() {
   elements.uploadModal.hidden = false;
   document.body.style.overflow = 'hidden';
+  syncUploadAccess();
+  if (!state.authToken) elements.adminPassword.focus();
 }
 
 function closeUploadModal() {
@@ -248,6 +271,47 @@ function resetUpload() {
   elements.uploadResult.hidden = true;
   elements.uploadResult.className = 'upload-result';
   elements.uploadResult.textContent = '';
+  syncUploadAccess();
+}
+
+function syncUploadAccess() {
+  const loggedIn = Boolean(state.authToken);
+  elements.adminLogin.hidden = loggedIn;
+  elements.uploadWorkspace.hidden = !loggedIn;
+  elements.submitUploadButton.hidden = !loggedIn;
+  if (!loggedIn) {
+    elements.loginMessage.className = '';
+    elements.loginMessage.textContent = '上传需要管理员身份。';
+  }
+}
+
+async function loginAdmin() {
+  const password = elements.adminPassword.value;
+  if (!password) {
+    elements.loginMessage.className = 'error';
+    elements.loginMessage.textContent = '请输入管理口令。';
+    return;
+  }
+  elements.loginButton.disabled = true;
+  elements.loginMessage.className = '';
+  elements.loginMessage.textContent = '正在验证';
+  try {
+    const result = await fetchJson('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    state.authToken = result.accessToken;
+    sessionStorage.setItem('inventoryAdminToken', result.accessToken);
+    elements.adminPassword.value = '';
+    syncUploadAccess();
+    showToast('管理员身份验证成功');
+  } catch (error) {
+    elements.loginMessage.className = 'error';
+    elements.loginMessage.textContent = error.message;
+  } finally {
+    elements.loginButton.disabled = false;
+  }
 }
 
 function selectFile(file) {
@@ -266,12 +330,41 @@ function selectFile(file) {
 async function submitUpload() {
   if (!state.selectedFile) return;
   elements.submitUploadButton.disabled = true;
-  elements.submitUploadButton.innerHTML = '<img src="/icons/loader-circle.svg" alt="" />正在导入';
-  const formData = new FormData();
-  formData.append('file', state.selectedFile);
+  elements.submitUploadButton.innerHTML = '<img src="./icons/loader-circle.svg" alt="" />正在准备';
 
   try {
-    const result = await fetchJson('/api/imports', { method: 'POST', body: formData });
+    const file = state.selectedFile;
+    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    const sha256 = [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('');
+    const session = await fetchJson('/api/import-sessions', {
+      method: 'POST',
+      authenticated: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: file.name, size: file.size, sha256 }),
+    });
+    const received = new Set(session.received || []);
+    const totalChunks = Math.ceil(file.size / session.chunkBytes);
+    for (let index = 0; index < totalChunks; index += 1) {
+      if (!received.has(index)) {
+        const start = index * session.chunkBytes;
+        const body = file.slice(start, Math.min(file.size, start + session.chunkBytes));
+        await fetchJson(`/api/import-sessions/${session.id}/chunks/${index}`, {
+          method: 'PUT',
+          authenticated: true,
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body,
+        });
+      }
+      const progress = Math.round((index + 1) / totalChunks * 100);
+      elements.fileMeta.textContent = `正在上传 ${progress}%`;
+    }
+    elements.submitUploadButton.innerHTML = '<img src="./icons/loader-circle.svg" alt="" />正在写入';
+    const result = await fetchJson(`/api/import-sessions/${session.id}/complete`, {
+      method: 'POST',
+      authenticated: true,
+    });
     elements.uploadResult.hidden = false;
     elements.uploadResult.className = 'upload-result success';
     elements.uploadResult.innerHTML = `导入完成：新增 <strong>${formatNumber(result.insertedRows, 0)}</strong> 条，重复 <strong>${formatNumber(result.duplicateRows, 0)}</strong> 条，异常 <strong>${formatNumber(result.errorRows, 0)}</strong> 条。`;
@@ -282,9 +375,10 @@ async function submitUpload() {
     elements.uploadResult.hidden = false;
     elements.uploadResult.className = 'upload-result error';
     elements.uploadResult.textContent = error.message;
+    syncUploadAccess();
   } finally {
     elements.submitUploadButton.disabled = false;
-    elements.submitUploadButton.innerHTML = '<img src="/icons/upload.svg" alt="" />开始导入';
+    elements.submitUploadButton.innerHTML = '<img src="./icons/upload.svg" alt="" />开始导入';
   }
 }
 
@@ -293,6 +387,10 @@ document.querySelector('#openUploadButton').addEventListener('click', openUpload
 document.querySelector('#closeUploadButton').addEventListener('click', closeUploadModal);
 document.querySelector('#cancelUploadButton').addEventListener('click', closeUploadModal);
 elements.submitUploadButton.addEventListener('click', submitUpload);
+elements.loginButton.addEventListener('click', loginAdmin);
+elements.adminPassword.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') loginAdmin();
+});
 elements.fileInput.addEventListener('change', (event) => selectFile(event.target.files[0]));
 elements.uploadModal.addEventListener('click', (event) => {
   if (event.target === elements.uploadModal) closeUploadModal();

@@ -145,13 +145,23 @@
             <img src="/icons/x.svg" alt="关闭" />
           </button>
         </div>
-        <label class="drop-zone" id="dropZone">
-          <input id="fileInput" type="file" accept=".xlsx,.xls" />
-          <img src="/icons/file-spreadsheet.svg" alt="" />
-          <strong id="filePrompt">选择或拖入 Excel 文件</strong>
-          <span id="fileMeta">需包含 SKU编号、变动、新库存列</span>
-        </label>
-        <div class="upload-result" id="uploadResult" hidden></div>
+        <div class="admin-login" id="adminLogin">
+          <label for="adminPassword">管理口令</label>
+          <div class="admin-login-row">
+            <input id="adminPassword" type="password" autocomplete="current-password" />
+            <button class="button button-primary" id="loginButton" type="button">登录</button>
+          </div>
+          <p id="loginMessage">上传需要管理员身份。</p>
+        </div>
+        <div id="uploadWorkspace" hidden>
+          <label class="drop-zone" id="dropZone">
+            <input id="fileInput" type="file" accept=".xlsx,.xls" />
+            <img src="/icons/file-spreadsheet.svg" alt="" />
+            <strong id="filePrompt">选择或拖入 Excel 文件</strong>
+            <span id="fileMeta">需包含 SKU编号、变动、新库存列</span>
+          </label>
+          <div class="upload-result" id="uploadResult" hidden></div>
+        </div>
         <div class="modal-actions">
           <button class="button button-secondary" id="cancelUploadButton" type="button">取消</button>
           <button class="button button-primary" id="submitUploadButton" type="button" disabled>
@@ -162,6 +172,7 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
+    <script src="/config.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

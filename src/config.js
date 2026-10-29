@@ -8,12 +8,12 @@ function loadConfig() {
   const configPath = path.resolve(
     process.env.MYSQL_CONFIG_PATH || path.join(projectRoot, 'mysql.yaml')
   );
+  const source = process.env.MYSQL_CONFIG_YAML || (
+    fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : ''
+  );
+  if (!source) throw new Error('找不到数据库配置，请设置 MYSQL_CONFIG_YAML 或准备 mysql.yaml。');
 
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`找不到数据库配置文件：${configPath}`);
-  }
-
-  const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) || {};
+  const parsed = yaml.load(source) || {};
   const mysql = parsed.mysql || {};
   const required = ['host', 'database', 'username'];
   const missing = required.filter((key) => !mysql[key]);
@@ -26,7 +26,7 @@ function loadConfig() {
   if (mysql.ssl?.enabled) {
     ssl = {};
     if (mysql.ssl.ca_file) {
-      const caPath = path.resolve(projectRoot, mysql.ssl.ca_file);
+        const caPath = path.resolve(path.dirname(configPath), mysql.ssl.ca_file);
       ssl.ca = fs.readFileSync(caPath, 'utf8');
     }
   }
@@ -52,6 +52,13 @@ function loadConfig() {
       dateStrings: true,
       decimalNumbers: true,
       ssl,
+    },
+    security: {
+      adminPassword: process.env.ADMIN_PASSWORD || '',
+      allowedOrigins: (process.env.ALLOWED_ORIGINS || 'http://127.0.0.1:3100,http://localhost:3100')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
     },
   };
 }

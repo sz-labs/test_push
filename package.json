@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "import:file": "node scripts/import-file.js"
+    "import:file": "node scripts/import-file.js",
+    "build:pages": "node scripts/build-pages.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^5.1.0",

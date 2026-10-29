@@ -1,0 +1,48 @@
+name: Publish test dashboard
+
+on:
+  push:
+    branches: [test]
+  workflow_dispatch:
+
+concurrency:
+  group: pages-test
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/test'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      INVENTORY_API_BASE_URL: https://1333194117-gi8fb1nqn3.ap-guangzhou.tencentscf.com
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -50,3 +50,23 @@ pnpm start
 ```
 
 此时应由防火墙、反向代理或可信内网限制访问范围。
+
+## test 分支在线部署
+
+`test` 分支把静态页面发布到 GitHub Pages，把 `/api/*` 部署到腾讯云 SCF：
+
+- 访客可以匿名查看汇总、趋势、筛选明细和导入记录。
+- Excel 上传需要服务端 `ADMIN_PASSWORD`，登录令牌有效期为 8 小时。
+- 浏览器按 1MB 分块上传，单文件最大 20MB，服务端校验 SHA-256 后写入 MySQL。
+- 数据库连接、管理员口令、CAM 密钥和 GitHub Token 均不进入仓库或前端产物。
+
+Pages 构建命令：
+
+```powershell
+$env:INVENTORY_API_BASE_URL = "https://你的函数地址"
+npm ci
+npm test
+npm run build:pages
+```
+
+SCF 使用 `Nodejs20.19` Web 函数，入口由根目录 `scf_bootstrap` 启动并监听 `0.0.0.0:9000`。
