@@ -1,0 +1,8 @@
+node_modules/
+.pnpm-store/
+mysql.yaml
+.env
+*.log
+.DS_Store
+Thumbs.db
+

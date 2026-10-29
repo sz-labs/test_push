@@ -1,0 +1,20 @@
+{
+  "name": "inventory-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "本地库存 Excel 导入与数据看板",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "import:file": "node scripts/import-file.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "js-yaml": "^4.1.0",
+    "lucide-static": "^0.468.0",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "xlsx": "^0.18.5"
+  }
+}

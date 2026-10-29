@@ -1,0 +1,12 @@
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  database: "inventory_dashboard"
+  username: "root"
+  password: ""
+  charset: "utf8mb4"
+  connect_timeout_ms: 10000
+  pool_size: 5
+  ssl:
+    enabled: false
+    ca_file: ""
