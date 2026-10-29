@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>登录 - 库存变动看板</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/login.css" />
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-panel" aria-labelledby="loginTitle">
+        <div class="brand-block">
+          <div class="brand-mark"><img src="/icons/boxes.svg" alt="" /></div>
+          <div>
+            <h1 id="loginTitle">库存变动看板</h1>
+            <p>登录后查看和上传库存数据</p>
+          </div>
+        </div>
+
+        <form id="loginForm">
+          <label>
+            <span>用户名</span>
+            <div class="input-shell">
+              <img src="/icons/user-round.svg" alt="" />
+              <input id="username" name="username" type="text" autocomplete="username" required autofocus />
+            </div>
+          </label>
+          <label>
+            <span>密码</span>
+            <div class="input-shell password-shell">
+              <img src="/icons/lock-keyhole.svg" alt="" />
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
+              <button id="togglePassword" type="button" title="显示密码">
+                <img src="/icons/eye.svg" alt="显示密码" />
+              </button>
+            </div>
+          </label>
+          <div class="login-error" id="loginError" role="alert" hidden></div>
+          <button class="login-button" id="loginButton" type="submit">
+            <span>登录</span>
+            <img src="/icons/arrow-right.svg" alt="" />
+          </button>
+        </form>
+      </section>
+    </main>
+    <script src="/login.js"></script>
+  </body>
+</html>

@@ -5,21 +5,35 @@ const yaml = require('js-yaml');
 const projectRoot = path.resolve(__dirname, '..');
 
 function loadConfig() {
-  const configPath = path.resolve(
+  const mysqlConfigPath = path.resolve(
     process.env.MYSQL_CONFIG_PATH || path.join(projectRoot, 'mysql.yaml')
   );
+  const authConfigPath = path.resolve(
+    process.env.AUTH_CONFIG_PATH || path.join(projectRoot, 'auth.yaml')
+  );
 
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`找不到数据库配置文件：${configPath}`);
+  if (!fs.existsSync(mysqlConfigPath)) {
+    throw new Error(`找不到数据库配置文件：${mysqlConfigPath}`);
+  }
+  if (!fs.existsSync(authConfigPath)) {
+    throw new Error(`找不到登录配置文件：${authConfigPath}`);
   }
 
-  const parsed = yaml.load(fs.readFileSync(configPath, 'utf8')) || {};
-  const mysql = parsed.mysql || {};
-  const required = ['host', 'database', 'username'];
-  const missing = required.filter((key) => !mysql[key]);
+  const mysqlConfig = yaml.load(fs.readFileSync(mysqlConfigPath, 'utf8')) || {};
+  const authConfig = yaml.load(fs.readFileSync(authConfigPath, 'utf8')) || {};
+  const mysql = mysqlConfig.mysql || {};
+  const auth = authConfig.auth || {};
+  const missingMysql = ['host', 'database', 'username'].filter((key) => !mysql[key]);
+  const missingAuth = ['session_secret'].filter((key) => !auth[key]);
 
-  if (missing.length) {
-    throw new Error(`mysql.yaml 缺少配置：${missing.join(', ')}`);
+  if (missingMysql.length) {
+    throw new Error(`mysql.yaml 缺少配置：${missingMysql.join(', ')}`);
+  }
+  if (missingAuth.length) {
+    throw new Error(`auth.yaml 缺少配置：${missingAuth.join(', ')}`);
+  }
+  if (String(auth.session_secret).length < 32) {
+    throw new Error('auth.yaml 的 session_secret 至少需要 32 个字符。');
   }
 
   let ssl;
@@ -36,6 +50,10 @@ function loadConfig() {
     server: {
       host: process.env.HOST || '127.0.0.1',
       port: Number(process.env.PORT || 3100),
+    },
+    auth: {
+      sessionSecret: String(auth.session_secret),
+      sessionHours: Math.max(1, Number(auth.session_hours || 12)),
     },
     mysql: {
       host: mysql.host,

@@ -4,10 +4,13 @@ const state = {
   totalPages: 1,
   selectedFile: null,
   searchTimer: null,
+  users: [],
+  resetUserId: null,
 };
 
 const elements = {
   dbStatus: document.querySelector('#dbStatus'),
+  currentUser: document.querySelector('#currentUser'),
   lastUpdated: document.querySelector('#lastUpdated'),
   totalRecords: document.querySelector('#totalRecords'),
   uniqueSkus: document.querySelector('#uniqueSkus'),
@@ -35,6 +38,19 @@ const elements = {
   dropZone: document.querySelector('#dropZone'),
   submitUploadButton: document.querySelector('#submitUploadButton'),
   uploadResult: document.querySelector('#uploadResult'),
+  openUsersButton: document.querySelector('#openUsersButton'),
+  usersModal: document.querySelector('#usersModal'),
+  closeUsersButton: document.querySelector('#closeUsersButton'),
+  createUserForm: document.querySelector('#createUserForm'),
+  newUsername: document.querySelector('#newUsername'),
+  newUserPassword: document.querySelector('#newUserPassword'),
+  createUserButton: document.querySelector('#createUserButton'),
+  userMessage: document.querySelector('#userMessage'),
+  userTableBody: document.querySelector('#userTableBody'),
+  passwordResetForm: document.querySelector('#passwordResetForm'),
+  passwordResetTitle: document.querySelector('#passwordResetTitle'),
+  resetPasswordInput: document.querySelector('#resetPasswordInput'),
+  cancelPasswordReset: document.querySelector('#cancelPasswordReset'),
   toast: document.querySelector('#toast'),
 };
 
@@ -66,6 +82,10 @@ function formatShortDate(value) {
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    window.location.replace('/login');
+    throw new Error('登录已失效，请重新登录。');
+  }
   if (!response.ok) throw new Error(payload.message || '请求失败');
   return payload;
 }
@@ -288,7 +308,181 @@ async function submitUpload() {
   }
 }
 
+function showUserMessage(message, type = 'success') {
+  elements.userMessage.textContent = message;
+  elements.userMessage.className = `user-message ${type}`;
+  elements.userMessage.hidden = !message;
+}
+
+function closePasswordReset() {
+  state.resetUserId = null;
+  elements.passwordResetForm.hidden = true;
+  elements.passwordResetTitle.textContent = '重置密码';
+  elements.resetPasswordInput.value = '';
+}
+
+function renderUsers(rows) {
+  state.users = rows;
+  if (!rows.length) {
+    elements.userTableBody.innerHTML = '<tr><td colspan="5" class="table-message">暂无用户</td></tr>';
+    return;
+  }
+
+  elements.userTableBody.innerHTML = rows.map((user) => {
+    const isAdmin = user.role === 'admin';
+    const isActive = Boolean(Number(user.is_active));
+    const username = escapeHtml(user.username);
+    const statusAction = isActive ? '停用' : '启用';
+    const statusIcon = isActive ? 'power-off.svg' : 'power.svg';
+    return `
+      <tr>
+        <td><strong>${username}</strong></td>
+        <td><span class="user-role role-${isAdmin ? 'admin' : 'user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
+        <td><span class="user-status status-${isActive ? 'active' : 'inactive'}">${isActive ? '已启用' : '已停用'}</span></td>
+        <td>${escapeHtml(formatDateTime(user.last_login_at))}</td>
+        <td>
+          <div class="user-actions">
+            <button class="user-action-button" type="button" data-user-action="reset" data-user-id="${user.id}" title="重置密码">
+              <img src="/icons/key-round.svg" alt="" />
+            </button>
+            ${isAdmin ? '' : `
+              <button class="user-action-button" type="button" data-user-action="toggle" data-user-id="${user.id}" title="${statusAction}用户">
+                <img src="/icons/${statusIcon}" alt="" />
+              </button>
+              <button class="user-action-button danger" type="button" data-user-action="delete" data-user-id="${user.id}" title="删除用户">
+                <img src="/icons/trash-2.svg" alt="" />
+              </button>`}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+async function loadUsers() {
+  elements.userTableBody.innerHTML = '<tr><td colspan="5" class="table-message">正在加载用户</td></tr>';
+  try {
+    const data = await fetchJson('/api/users');
+    renderUsers(data.rows);
+  } catch (error) {
+    elements.userTableBody.innerHTML = '<tr><td colspan="5" class="table-message">用户列表加载失败</td></tr>';
+    showUserMessage(error.message, 'error');
+  }
+}
+
+async function openUsersModal() {
+  showUserMessage('');
+  closePasswordReset();
+  elements.usersModal.hidden = false;
+  document.body.style.overflow = 'hidden';
+  await loadUsers();
+}
+
+function closeUsersModal() {
+  elements.usersModal.hidden = true;
+  document.body.style.overflow = '';
+  elements.createUserForm.reset();
+  showUserMessage('');
+  closePasswordReset();
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  const username = elements.newUsername.value.trim();
+  const password = elements.newUserPassword.value;
+  elements.createUserButton.disabled = true;
+
+  try {
+    await fetchJson('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    elements.createUserForm.reset();
+    showUserMessage(`用户 ${username} 已新增。`);
+    await loadUsers();
+    elements.newUsername.focus();
+  } catch (error) {
+    showUserMessage(error.message, 'error');
+  } finally {
+    elements.createUserButton.disabled = false;
+  }
+}
+
+async function handleUserAction(event) {
+  const button = event.target.closest('[data-user-action]');
+  if (!button) return;
+  const userId = Number(button.dataset.userId);
+  const user = state.users.find((item) => Number(item.id) === userId);
+  if (!user) return;
+
+  if (button.dataset.userAction === 'reset') {
+    state.resetUserId = userId;
+    elements.passwordResetTitle.textContent = `重置 ${user.username} 的密码`;
+    elements.resetPasswordInput.value = '';
+    elements.passwordResetForm.hidden = false;
+    elements.resetPasswordInput.focus();
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    if (button.dataset.userAction === 'toggle') {
+      const isActive = !Boolean(Number(user.is_active));
+      await fetchJson(`/api/users/${userId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive }),
+      });
+      showUserMessage(`用户 ${user.username} 已${isActive ? '启用' : '停用'}。`);
+    }
+
+    if (button.dataset.userAction === 'delete') {
+      if (!window.confirm(`确定删除用户 ${user.username}？`)) return;
+      await fetchJson(`/api/users/${userId}`, { method: 'DELETE' });
+      if (state.resetUserId === userId) closePasswordReset();
+      showUserMessage(`用户 ${user.username} 已删除。`);
+    }
+    await loadUsers();
+  } catch (error) {
+    showUserMessage(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function resetUserPassword(event) {
+  event.preventDefault();
+  if (!state.resetUserId) return;
+  const password = elements.resetPasswordInput.value;
+  const submitButton = elements.passwordResetForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+
+  try {
+    await fetchJson(`/api/users/${state.resetUserId}/password`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const user = state.users.find((item) => Number(item.id) === state.resetUserId);
+    showUserMessage(`用户 ${user?.username || ''} 的密码已更新。`);
+    closePasswordReset();
+  } catch (error) {
+    showUserMessage(error.message, 'error');
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
 document.querySelector('#refreshButton').addEventListener('click', () => refreshAll(true));
+document.querySelector('#logoutButton').addEventListener('click', async () => {
+  const button = document.querySelector('#logoutButton');
+  button.disabled = true;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } finally {
+    window.location.replace('/login');
+  }
+});
 document.querySelector('#openUploadButton').addEventListener('click', openUploadModal);
 document.querySelector('#closeUploadButton').addEventListener('click', closeUploadModal);
 document.querySelector('#cancelUploadButton').addEventListener('click', closeUploadModal);
@@ -297,8 +491,18 @@ elements.fileInput.addEventListener('change', (event) => selectFile(event.target
 elements.uploadModal.addEventListener('click', (event) => {
   if (event.target === elements.uploadModal) closeUploadModal();
 });
+elements.openUsersButton.addEventListener('click', openUsersModal);
+elements.closeUsersButton.addEventListener('click', closeUsersModal);
+elements.usersModal.addEventListener('click', (event) => {
+  if (event.target === elements.usersModal) closeUsersModal();
+});
+elements.createUserForm.addEventListener('submit', createUser);
+elements.userTableBody.addEventListener('click', handleUserAction);
+elements.passwordResetForm.addEventListener('submit', resetUserPassword);
+elements.cancelPasswordReset.addEventListener('click', closePasswordReset);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !elements.uploadModal.hidden) closeUploadModal();
+  if (event.key === 'Escape' && !elements.usersModal.hidden) closeUsersModal();
 });
 
 ['dragenter', 'dragover'].forEach((eventName) => {
@@ -343,4 +547,15 @@ elements.nextPageButton.addEventListener('click', () => {
   if (state.page < state.totalPages) { state.page += 1; loadRecords(); }
 });
 
-refreshAll();
+async function initialize() {
+  try {
+    const session = await fetchJson('/api/auth/session');
+    elements.currentUser.textContent = session.username;
+    elements.openUsersButton.hidden = session.role !== 'admin';
+    await refreshAll();
+  } catch (error) {
+    if (!window.location.pathname.startsWith('/login')) showToast(error.message);
+  }
+}
+
+initialize();

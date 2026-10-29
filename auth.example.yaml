@@ -1,0 +1,3 @@
+auth:
+  session_secret: "替换为至少 32 位的随机字符串"
+  session_hours: 12

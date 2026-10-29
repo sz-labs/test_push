@@ -26,6 +26,28 @@ async function initDatabase() {
     `);
 
     await connection.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_users (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        username VARCHAR(100) NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_by BIGINT UNSIGNED NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        last_login_at DATETIME NULL,
+        admin_guard TINYINT GENERATED ALWAYS AS (
+          CASE WHEN role = 'admin' THEN 1 ELSE NULL END
+        ) STORED,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_dashboard_username (username),
+        UNIQUE KEY uq_single_dashboard_admin (admin_guard),
+        KEY idx_dashboard_users_active (is_active),
+        KEY idx_dashboard_users_created_by (created_by)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    await connection.query(`
       CREATE TABLE IF NOT EXISTS inventory_updates (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         batch_id BIGINT UNSIGNED NOT NULL,
@@ -68,4 +90,13 @@ async function pingDatabase() {
   return rows[0];
 }
 
-module.exports = { pool, initDatabase, pingDatabase };
+async function assertSingleAdmin() {
+  const [rows] = await pool.query(
+    "SELECT COUNT(*) AS admin_count FROM dashboard_users WHERE role = 'admin'"
+  );
+  if (Number(rows[0].admin_count) !== 1) {
+    throw new Error('系统必须且只能有一个管理员。请先运行 auth:create-admin 初始化管理员。');
+  }
+}
+
+module.exports = { pool, initDatabase, pingDatabase, assertSingleAdmin };

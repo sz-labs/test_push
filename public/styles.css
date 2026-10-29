@@ -54,6 +54,18 @@ img { display: block; }
 .brand h1 { margin: 0; font-size: 18px; line-height: 1.3; letter-spacing: 0; }
 .brand p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .topbar-actions { gap: 10px; }
+.user-chip {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-left: 1px solid #dfe4ea;
+  color: #4d5867;
+  font-size: 12px;
+}
+.user-chip img { width: 16px; height: 16px; opacity: 0.72; }
+.user-chip strong { font-weight: 700; }
 
 .db-status {
   display: inline-flex;
@@ -301,6 +313,11 @@ tbody tr:hover { background: #f8fafb; }
   border-radius: 8px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
 }
+.users-modal {
+  width: min(900px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .modal-header h2 { margin: 0; font-size: 18px; }
 .modal-header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
@@ -327,6 +344,78 @@ tbody tr:hover { background: #f8fafb; }
 .upload-result { margin-top: 14px; padding: 12px; border-radius: 6px; font-size: 12px; line-height: 1.7; }
 .upload-result.success { color: #0c6548; background: #e5f4ed; }
 .upload-result.error { color: #9c2d35; background: #fae8ea; }
+
+.create-user-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(200px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 22px;
+  padding: 16px;
+  border: 1px solid #dfe4ea;
+  border-radius: 7px;
+  background: #f7f9fb;
+}
+.create-user-form label { display: grid; gap: 6px; }
+.create-user-form label span { color: #596474; font-size: 11px; font-weight: 700; }
+.create-user-form input, .password-reset-panel input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  padding: 0 10px;
+  outline: none;
+}
+.create-user-form input:focus, .password-reset-panel input:focus {
+  border-color: #5a85ca;
+  box-shadow: 0 0 0 3px rgba(38, 103, 216, 0.1);
+}
+.user-message { margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 12px; }
+.user-message.success { color: #0c6548; background: #e5f4ed; }
+.user-message.error { color: #9c2d35; background: #fae8ea; }
+.user-table-wrap { margin-top: 16px; overflow: auto; border: 1px solid #dfe4ea; border-radius: 6px; }
+.user-table { min-width: 700px; }
+.user-table th:last-child, .user-table td:last-child { text-align: right; }
+.user-role, .user-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.role-admin { color: #6d4aa0; background: #f0eafa; }
+.role-user { color: #3f596f; background: #eaf0f5; }
+.status-active { color: #0b694a; background: #e2f4ed; }
+.status-inactive { color: #8c353c; background: #fae9eb; }
+.user-actions { display: inline-flex; justify-content: flex-end; gap: 6px; }
+.user-action-button {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #cfd6df;
+  border-radius: 5px;
+  background: #fff;
+}
+.user-action-button:hover { background: #eef2f5; }
+.user-action-button.danger:hover { border-color: #dc9ca1; background: #fae9eb; }
+.user-action-button img { width: 15px; height: 15px; }
+.password-reset-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.2fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 7px;
+  background: #eef3f8;
+}
+.password-reset-panel[hidden] { display: none; }
+.password-reset-panel strong, .password-reset-panel span { display: block; }
+.password-reset-panel strong { font-size: 13px; }
+.password-reset-panel span { margin-top: 4px; color: #687385; font-size: 11px; }
 
 .toast {
   position: fixed;
@@ -362,18 +451,26 @@ tbody tr:hover { background: #f8fafb; }
   .import-row { grid-template-columns: 1fr 80px 80px; padding: 12px 0; }
   .import-row .import-stat:nth-of-type(n+3) { display: none; }
   .import-row .status-pill { justify-self: end; }
+  .create-user-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .create-user-form .button { grid-column: 1 / -1; justify-self: end; }
+  .password-reset-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .password-reset-panel > div, .password-reset-panel input { grid-column: 1 / -1; }
 }
 
 @media (max-width: 520px) {
   .topbar { padding: 12px; }
   .brand-mark { display: none; }
-  .brand p, .db-status, #refreshButton { display: none; }
+  .brand p, .db-status, .user-chip, #refreshButton { display: none; }
   .topbar-actions { flex-wrap: nowrap; }
   .button { padding: 0 11px; }
+  #openUsersButton { width: 38px; padding: 0; }
+  #openUsersButton span { display: none; }
   .metric-grid { grid-template-columns: 1fr; }
   .metric-card { min-height: 116px; }
   .filters { grid-template-columns: 1fr; }
   .search-field { grid-column: auto; }
   .filters .icon-button { width: 100%; }
   .panel, .data-section, .import-section { padding: 16px; }
+  .users-modal { padding: 16px; }
+  .create-user-form { grid-template-columns: 1fr; padding: 12px; }
 }

@@ -7,10 +7,12 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "import:file": "node scripts/import-file.js"
+    "import:file": "node scripts/import-file.js",
+    "auth:create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
     "express": "^5.1.0",
+    "express-session": "^1.19.0",
     "js-yaml": "^4.1.0",
     "lucide-static": "^0.468.0",
     "multer": "^2.0.2",

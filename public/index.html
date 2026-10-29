@@ -19,11 +19,20 @@
       </div>
       <div class="topbar-actions">
         <span class="db-status" id="dbStatus"><span></span>连接中</span>
+        <span class="user-chip" title="当前登录用户">
+          <img src="/icons/user-round.svg" alt="" /><strong id="currentUser">--</strong>
+        </span>
         <button class="button button-secondary" id="refreshButton" type="button">
           <img src="/icons/refresh-cw.svg" alt="" />刷新
         </button>
+        <button class="button button-secondary" id="openUsersButton" type="button" hidden>
+          <img src="/icons/users-round.svg" alt="" /><span>用户管理</span>
+        </button>
         <button class="button button-primary" id="openUploadButton" type="button">
           <img src="/icons/upload.svg" alt="" />上传 Excel
+        </button>
+        <button class="icon-button logout-button" id="logoutButton" type="button" title="退出登录">
+          <img src="/icons/log-out.svg" alt="退出登录" />
         </button>
       </div>
     </header>
@@ -158,6 +167,49 @@
             <img src="/icons/upload.svg" alt="" />开始导入
           </button>
         </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="usersModal" hidden>
+      <section class="modal users-modal" role="dialog" aria-modal="true" aria-labelledby="usersTitle">
+        <div class="modal-header">
+          <div><h2 id="usersTitle">用户管理</h2><p>新增和管理普通用户</p></div>
+          <button class="icon-button" id="closeUsersButton" type="button" title="关闭">
+            <img src="/icons/x.svg" alt="关闭" />
+          </button>
+        </div>
+
+        <form class="create-user-form" id="createUserForm">
+          <label>
+            <span>用户名</span>
+            <input id="newUsername" type="text" maxlength="100" autocomplete="off" required />
+          </label>
+          <label>
+            <span>初始密码</span>
+            <input id="newUserPassword" type="text" maxlength="255" autocomplete="off" required />
+          </label>
+          <button class="button button-primary" id="createUserButton" type="submit">
+            <img src="/icons/user-plus.svg" alt="" />新增用户
+          </button>
+        </form>
+        <div class="user-message" id="userMessage" hidden></div>
+
+        <div class="user-table-wrap">
+          <table class="user-table">
+            <thead><tr><th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
+            <tbody id="userTableBody"><tr><td colspan="5" class="table-message">正在加载用户</td></tr></tbody>
+          </table>
+        </div>
+
+        <form class="password-reset-panel" id="passwordResetForm" hidden>
+          <div>
+            <strong id="passwordResetTitle">重置密码</strong>
+            <span>新密码将以明文写入数据库</span>
+          </div>
+          <input id="resetPasswordInput" type="text" maxlength="255" autocomplete="off" required />
+          <button class="button button-primary" type="submit">保存</button>
+          <button class="button button-secondary" id="cancelPasswordReset" type="button">取消</button>
+        </form>
       </section>
     </div>
 

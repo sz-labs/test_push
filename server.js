@@ -1,11 +1,16 @@
 const path = require('node:path');
 const express = require('express');
+const session = require('express-session');
 const multer = require('multer');
 const config = require('./src/config');
-const { pool, initDatabase, pingDatabase } = require('./src/db');
+const { pool, initDatabase, pingDatabase, assertSingleAdmin } = require('./src/db');
 const { importExcelBuffer } = require('./src/excel-import');
 
 const app = express();
+const loginAttempts = new Map();
+const publicDirectory = path.join(__dirname, 'public');
+const maxLoginFailures = 5;
+const loginWindowMs = 15 * 60 * 1000;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -16,14 +21,306 @@ const upload = multer({
 });
 
 app.disable('x-powered-by');
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
+app.use(session({
+  name: 'inventory.sid',
+  secret: config.auth.sessionSecret,
+  resave: false,
+  saveUninitialized: false,
+  rolling: true,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: false,
+    maxAge: config.auth.sessionHours * 60 * 60 * 1000,
+  },
+}));
 app.use('/icons', express.static(path.join(__dirname, 'node_modules', 'lucide-static', 'icons')));
-app.use(express.static(path.join(__dirname, 'public')));
+
+function getLoginState(key) {
+  const current = loginAttempts.get(key);
+  if (!current || Date.now() - current.startedAt >= loginWindowMs) {
+    const fresh = { failures: 0, startedAt: Date.now(), lockedUntil: 0 };
+    loginAttempts.set(key, fresh);
+    return fresh;
+  }
+  return current;
+}
+
+function rejectUnauthenticated(request, response) {
+  if (request.path.startsWith('/api/')) {
+    response.status(401).json({ message: '登录已失效，请重新登录。' });
+    return;
+  }
+  response.redirect('/login');
+}
+
+async function requireAuth(request, response, next) {
+  if (!request.session?.authenticated || !request.session.userId) {
+    rejectUnauthenticated(request, response);
+    return;
+  }
+
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, username, role, is_active
+       FROM dashboard_users
+       WHERE id = ?
+       LIMIT 1`,
+      [request.session.userId]
+    );
+    const user = rows[0];
+    if (!user || !user.is_active) {
+      request.session.destroy(() => rejectUnauthenticated(request, response));
+      return;
+    }
+
+    request.user = user;
+    request.session.username = user.username;
+    request.session.role = user.role;
+    response.set('Cache-Control', 'no-store');
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function requireAdmin(request, response, next) {
+  if (request.user?.role !== 'admin') {
+    response.status(403).json({ message: '只有管理员可以执行此操作。' });
+    return;
+  }
+  next();
+}
+
+app.get(['/login', '/login.html'], (request, response) => {
+  response.set('Cache-Control', 'no-store');
+  if (request.session?.authenticated) {
+    response.redirect('/');
+    return;
+  }
+  response.sendFile(path.join(publicDirectory, 'login.html'));
+});
+app.get('/login.css', (_request, response) => {
+  response.sendFile(path.join(publicDirectory, 'login.css'));
+});
+app.get('/login.js', (_request, response) => {
+  response.sendFile(path.join(publicDirectory, 'login.js'));
+});
+
+app.post('/api/auth/login', async (request, response, next) => {
+  const attemptKey = request.ip || request.socket.remoteAddress || 'local';
+  const attempt = getLoginState(attemptKey);
+  const now = Date.now();
+
+  if (attempt.lockedUntil > now) {
+    const retryAfter = Math.ceil((attempt.lockedUntil - now) / 1000);
+    response.set('Retry-After', String(retryAfter));
+    response.status(429).json({ message: `登录失败次数过多，请在 ${Math.ceil(retryAfter / 60)} 分钟后重试。` });
+    return;
+  }
+
+  const username = String(request.body?.username || '').trim().slice(0, 100);
+  const password = String(request.body?.password || '').slice(0, 255);
+
+  let user;
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, username, password, role, is_active
+       FROM dashboard_users
+       WHERE username = ?
+       LIMIT 1`,
+      [username]
+    );
+    user = rows[0];
+  } catch (error) {
+    next(error);
+    return;
+  }
+  const validCredentials = Boolean(user && user.is_active && password === user.password);
+
+  if (!validCredentials) {
+    attempt.failures += 1;
+    if (attempt.failures >= maxLoginFailures) attempt.lockedUntil = now + loginWindowMs;
+    loginAttempts.set(attemptKey, attempt);
+    response.status(401).json({ message: '用户名或密码错误。' });
+    return;
+  }
+
+  loginAttempts.delete(attemptKey);
+  try {
+    await pool.execute('UPDATE dashboard_users SET last_login_at = NOW() WHERE id = ?', [user.id]);
+  } catch (error) {
+    next(error);
+    return;
+  }
+  request.session.regenerate((error) => {
+    if (error) {
+      next(error);
+      return;
+    }
+    request.session.authenticated = true;
+    request.session.userId = user.id;
+    request.session.username = user.username;
+    request.session.role = user.role;
+    request.session.save((saveError) => {
+      if (saveError) {
+        next(saveError);
+        return;
+      }
+      response.json({ username: user.username, role: user.role });
+    });
+  });
+});
+
+app.post('/api/auth/logout', requireAuth, (request, response, next) => {
+  request.session.destroy((error) => {
+    if (error) {
+      next(error);
+      return;
+    }
+    response.clearCookie('inventory.sid');
+    response.status(204).end();
+  });
+});
+
+app.get('/api/auth/session', requireAuth, (request, response) => {
+  response.json({
+    id: request.user.id,
+    username: request.user.username,
+    role: request.user.role,
+  });
+});
+
+app.use(requireAuth);
+app.use(express.static(publicDirectory));
 
 app.get('/api/health', async (_request, response, next) => {
   try {
     const database = await pingDatabase();
     response.json({ ok: true, database });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/users', requireAdmin, async (_request, response, next) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, username, role, is_active, created_at, updated_at, last_login_at
+      FROM dashboard_users
+      ORDER BY role = 'admin' DESC, created_at ASC, id ASC
+    `);
+    response.json({ rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/users', requireAdmin, async (request, response, next) => {
+  const username = String(request.body?.username || '').trim();
+  const password = String(request.body?.password || '');
+
+  if (!username || username.length > 100) {
+    response.status(400).json({ message: '用户名不能为空且不能超过 100 个字符。' });
+    return;
+  }
+  if (!password || password.length > 255) {
+    response.status(400).json({ message: '密码不能为空且不能超过 255 个字符。' });
+    return;
+  }
+
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO dashboard_users
+        (username, password, role, is_active, created_by)
+       VALUES (?, ?, 'user', 1, ?)`,
+      [username, password, request.user.id]
+    );
+    response.status(201).json({
+      id: result.insertId,
+      username,
+      role: 'user',
+      is_active: 1,
+    });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      response.status(409).json({ message: '该用户名已存在。' });
+      return;
+    }
+    next(error);
+  }
+});
+
+app.patch('/api/users/:id/status', requireAdmin, async (request, response, next) => {
+  const userId = Number(request.params.id);
+  const isActive = request.body?.isActive;
+  if (!Number.isSafeInteger(userId) || userId <= 0 || typeof isActive !== 'boolean') {
+    response.status(400).json({ message: '用户状态参数无效。' });
+    return;
+  }
+
+  try {
+    const [result] = await pool.execute(
+      `UPDATE dashboard_users
+       SET is_active = ?
+       WHERE id = ? AND role = 'user'`,
+      [isActive ? 1 : 0, userId]
+    );
+    if (!result.affectedRows) {
+      response.status(404).json({ message: '普通用户不存在或不能修改管理员状态。' });
+      return;
+    }
+    response.json({ id: userId, is_active: isActive ? 1 : 0 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/users/:id/password', requireAdmin, async (request, response, next) => {
+  const userId = Number(request.params.id);
+  const password = String(request.body?.password || '');
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    response.status(400).json({ message: '用户参数无效。' });
+    return;
+  }
+  if (!password || password.length > 255) {
+    response.status(400).json({ message: '密码不能为空且不能超过 255 个字符。' });
+    return;
+  }
+
+  try {
+    const [result] = await pool.execute(
+      'UPDATE dashboard_users SET password = ? WHERE id = ?',
+      [password, userId]
+    );
+    if (!result.affectedRows) {
+      response.status(404).json({ message: '用户不存在。' });
+      return;
+    }
+    response.json({ id: userId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/users/:id', requireAdmin, async (request, response, next) => {
+  const userId = Number(request.params.id);
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    response.status(400).json({ message: '用户参数无效。' });
+    return;
+  }
+
+  try {
+    const [result] = await pool.execute(
+      "DELETE FROM dashboard_users WHERE id = ? AND role = 'user'",
+      [userId]
+    );
+    if (!result.affectedRows) {
+      response.status(404).json({ message: '普通用户不存在或不能删除管理员。' });
+      return;
+    }
+    response.status(204).end();
   } catch (error) {
     next(error);
   }
@@ -207,6 +504,7 @@ app.use((error, _request, response, _next) => {
 
 async function start() {
   await initDatabase();
+  await assertSingleAdmin();
   await new Promise((resolve, reject) => {
     app.listen(config.server.port, config.server.host, (error) => {
       if (error) {
